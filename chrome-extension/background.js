@@ -1,32 +1,30 @@
 const MENU_ID = "feedback-helper";
 const DEFAULT_SERVER = "ws://127.0.0.1:12346";
+const KEEPALIVE_ALARM = "keepalive";
+const PING_TIMEOUT_MS = 5000;
 const MAX_RETRIES = 3;
 const RETRY_INTERVAL_MS = 15000;
-const HEALTH_CHECK_ALARM = "health-check";
-const PING_TIMEOUT_MS = 5000;
 
-let retryCount = 0;
-let retryTimer = null;
-let nextRetryAt = null;
+let currentStatus = "disconnected";
 let ws = null;
 let pendingRequests = new Map();
-let isRetrying = false;
+let retryCount = 0;
+let nextRetryAt = null;
+let retryTimer = null;
+let connecting = false;
 
 // ── badge ──
 
 function updateBadge(status) {
-  chrome.action.setBadgeText({ text: "●" });
-  if (status === "connected") {
-    chrome.action.setBadgeBackgroundColor({ color: [76, 175, 80, 255] });
-  } else if (status === "connecting") {
-    chrome.action.setBadgeBackgroundColor({ color: [255, 152, 0, 255] });
-  } else {
-    chrome.action.setBadgeBackgroundColor({ color: [158, 158, 158, 255] });
-  }
-}
-
-function getRetryState() {
-  return { retryCount, maxRetries: MAX_RETRIES, nextRetryAt, retryIntervalMs: RETRY_INTERVAL_MS };
+  const map = {
+    connected:    { text: "✓", color: "#4CAF50" },
+    connecting:   { text: "…", color: "#FF9800" },
+    disconnected: { text: "✕", color: "#9E9E9E" },
+    error:        { text: "!", color: "#F44336" },
+  };
+  const { text, color } = map[status] || map.disconnected;
+  chrome.action.setBadgeText({ text });
+  chrome.action.setBadgeBackgroundColor({ color });
 }
 
 // ── WebSocket ──
@@ -36,20 +34,37 @@ async function getServerUrl() {
   return serverUrl || DEFAULT_SERVER;
 }
 
+function setStatus(status) {
+  if (currentStatus === status) return;
+  currentStatus = status;
+  updateBadge(status);
+  broadcast({
+    type: "status_update",
+    status,
+    retry: { retryCount, maxRetries: MAX_RETRIES, retryIntervalMs: RETRY_INTERVAL_MS, nextRetryAt },
+  });
+}
+
+function getRetryState() {
+  return { retryCount, maxRetries: MAX_RETRIES, retryIntervalMs: RETRY_INTERVAL_MS, nextRetryAt };
+}
+
 function connect() {
   return new Promise(async (resolve) => {
-    const url = await getServerUrl();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      resolve(true);
-      return;
-    }
-
-    // Close any stale WebSocket before creating a new one
     if (ws) {
+      if (ws.readyState === WebSocket.OPEN) {
+        resolve(true);
+        return;
+      }
+      if (ws.readyState === WebSocket.CONNECTING) {
+        resolve(false);
+        return;
+      }
       try { ws.close(); } catch {}
       ws = null;
     }
 
+    const url = await getServerUrl();
     setStatus("connecting");
 
     try {
@@ -57,7 +72,8 @@ function connect() {
 
       ws.onopen = () => {
         retryCount = 0;
-        clearRetryTimer();
+        nextRetryAt = null;
+        connecting = false;
         setStatus("connected");
         resolve(true);
       };
@@ -65,10 +81,7 @@ function connect() {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === "pong") {
-            // Handled by ping timer
-            return;
-          }
+          if (msg.type === "pong") return;
           if (msg.type === "feedback_result" && msg.requestId) {
             const pending = pendingRequests.get(msg.requestId);
             if (pending) {
@@ -81,18 +94,47 @@ function connect() {
 
       ws.onclose = () => {
         ws = null;
-        setStatus("disconnected");
-        handleRetry();
+        if (currentStatus === "connected") {
+          onConnectFailed();
+        }
       };
 
-      ws.onerror = () => {
-        // onclose always fires after onerror, let onclose handle cleanup and retry
-      };
+      ws.onerror = () => {};
     } catch {
-      handleRetry();
+      onConnectFailed();
       resolve(false);
     }
   });
+}
+
+function onConnectFailed() {
+  ws = null;
+  retryCount++;
+
+  if (retryCount >= MAX_RETRIES) {
+    connecting = false;
+    nextRetryAt = Date.now() + RETRY_INTERVAL_MS;
+    setStatus("error");
+    retryTimer = setTimeout(() => {
+      retryCount = 0;
+      nextRetryAt = null;
+      connecting = true;
+      setStatus("connecting");
+      connect();
+    }, RETRY_INTERVAL_MS);
+  } else {
+    retryTimer = setTimeout(() => {
+      connect();
+    }, 1000);
+  }
+}
+
+function cancelRetry() {
+  if (retryTimer !== null) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  nextRetryAt = null;
 }
 
 function ping() {
@@ -101,9 +143,7 @@ function ping() {
       resolve(false);
       return;
     }
-
     const timeout = setTimeout(() => resolve(false), PING_TIMEOUT_MS);
-
     const handler = (event) => {
       try {
         const msg = JSON.parse(event.data);
@@ -114,67 +154,22 @@ function ping() {
         }
       } catch {}
     };
-
     ws.addEventListener("message", handler);
     ws.send(JSON.stringify({ type: "ping" }));
   });
 }
 
-async function checkConnection() {
-  const { serverUrl } = await chrome.storage.local.get("serverUrl");
-  if (!serverUrl && !(await chrome.storage.local.get("serverUrl")).serverUrl) {
-    return;
-  }
+async function tryConnect() {
+  if (currentStatus === "connected" || connecting) return;
 
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    await connect();
-  } else {
-    const ok = await ping();
-    if (!ok) {
-      // Close the unresponsive socket so onclose triggers reconnect
-      try { ws.close(); } catch {}
-      setStatus("disconnected");
-    }
-  }
-}
+  // Respect retry cooldown
+  if (nextRetryAt && nextRetryAt > Date.now()) return;
 
-function setStatus(status) {
-  chrome.storage.local.set({ connectionStatus: status });
-  updateBadge(status);
-  broadcast({ type: "status_update", status, retry: getRetryState() });
-}
-
-function handleRetry() {
-  if (isRetrying) return;
-  isRetrying = true;
-
-  clearRetryTimer();
-  retryCount++;
-
-  if (retryCount <= MAX_RETRIES) {
-    setStatus("connecting");
-    retryTimer = setTimeout(() => {
-      isRetrying = false;
-      connect();
-    }, 1000);
-  } else {
-    setStatus("disconnected");
-    nextRetryAt = Date.now() + RETRY_INTERVAL_MS;
-    retryTimer = setTimeout(() => {
-      isRetrying = false;
-      retryCount = 0;
-      nextRetryAt = null;
-      connect();
-    }, RETRY_INTERVAL_MS);
-  }
-}
-
-function clearRetryTimer() {
-  if (retryTimer) {
-    clearTimeout(retryTimer);
-    retryTimer = null;
-  }
-  nextRetryAt = null;
+  cancelRetry();
+  connecting = true;
+  retryCount = 0;
+  setStatus("connecting");
+  connect();
 }
 
 // ── broadcast ──
@@ -188,23 +183,27 @@ function broadcast(msg) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   switch (msg.type) {
     case "get_status": {
-      chrome.storage.local.get("connectionStatus").then(({ connectionStatus }) => {
-        sendResponse({
-          status: connectionStatus || "disconnected",
-          retry: getRetryState(),
-        });
-      });
+      sendResponse({ status: currentStatus, retry: getRetryState() });
       return true;
     }
-    case "update_badge": {
-      updateBadge(msg.status);
+    case "disconnect": {
+      cancelRetry();
+      connecting = false;
+      retryCount = 0;
+      nextRetryAt = null;
+      if (ws) {
+        try { ws.close(); } catch {}
+        ws = null;
+      }
+      setStatus("disconnected");
       break;
     }
     case "check_connection": {
+      cancelRetry();
+      connecting = false;
       retryCount = 0;
-      isRetrying = false;
-      clearRetryTimer();
-      checkConnection();
+      nextRetryAt = null;
+      tryConnect();
       break;
     }
     case "submit_feedback": {
@@ -227,7 +226,6 @@ async function handleFeedbackSubmit(data, sendResponse) {
 
   ws.send(JSON.stringify({ type: "feedback", data, requestId }));
 
-  // Timeout after 10s
   setTimeout(() => {
     if (pendingRequests.has(requestId)) {
       pendingRequests.delete(requestId);
@@ -250,31 +248,34 @@ chrome.runtime.onInstalled.addListener(async () => {
     contexts: ["selection"],
   });
 
-  connect();
+  tryConnect();
 });
 
 // ── startup ──
 
 chrome.runtime.onStartup.addListener(() => {
-  retryCount = 0;
-  clearRetryTimer();
-  connect();
+  tryConnect();
 });
 
-// ── periodic heartbeat ──
+// ── keepalive alarm (15s) ──
 
-chrome.alarms.create(HEALTH_CHECK_ALARM, { periodInMinutes: 5 });
+chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.25 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === HEALTH_CHECK_ALARM) {
-    const { connectionStatus } = await chrome.storage.local.get("connectionStatus");
-    if (connectionStatus === "connected" && ws && ws.readyState === WebSocket.OPEN) {
-      const ok = await ping();
-      if (!ok) {
-        // Close the unresponsive socket so onclose triggers reconnect
-        try { ws.close(); } catch {}
-        setStatus("disconnected");
+  if (alarm.name === KEEPALIVE_ALARM) {
+    if (currentStatus === "connected") {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const ok = await ping();
+        if (!ok) {
+          try { ws.close(); } catch {}
+          onConnectFailed();
+        }
+      } else {
+        onConnectFailed();
       }
+    }
+    if (currentStatus === "disconnected" || currentStatus === "error") {
+      tryConnect();
     }
   }
 });

@@ -1,6 +1,7 @@
 const DEFAULT_SERVER = "ws://127.0.0.1:12346";
 
 const el = (id) => document.getElementById(id);
+
 let countdownTimer = null;
 
 async function loadConfig() {
@@ -8,37 +9,46 @@ async function loadConfig() {
   el("serverUrl").value = serverUrl || DEFAULT_SERVER;
 }
 
-function updateStatusUI(status, retry) {
-  el("statusDot").className = "dot " + status;
-  const labels = { connected: "已连接", connecting: "连接中…", disconnected: "未连接" };
-  el("statusText").textContent = labels[status] || status;
-  updateRetryInfo(status, retry);
+function updateStatusUI(data) {
+  el("statusDot").className = "dot " + data.status;
+  const labels = { connected: "已连接", connecting: "连接中…", disconnected: "未连接", error: "连接错误" };
+  el("statusText").textContent = labels[data.status] || data.status;
+  updateRetryInfo(data);
 }
 
-function updateRetryInfo(status, retry) {
+function updateRetryInfo(data) {
   if (countdownTimer) {
     clearInterval(countdownTimer);
     countdownTimer = null;
   }
-  const el = document.getElementById("retryInfo");
-  if (!el) return;
+  const info = el("retryInfo");
+  info.textContent = "";
+  info.style.color = "#FF9800";
 
-  el.textContent = "";
-  el.className = "retry-info";
+  const { status, retry } = data;
 
-  if (status === "connecting" && retry?.retryCount > 0) {
-    el.textContent = `正在连接 (${retry.retryCount}/${retry.maxRetries})…`;
+  if (status === "connecting" && retry) {
+    if (retry.retryCount > 0) {
+      info.textContent = `正在连接 (${retry.retryCount}/${retry.maxRetries})…`;
+    } else {
+      info.textContent = "正在连接…";
+    }
+  } else if (status === "error" && retry?.nextRetryAt) {
+    startCountdown(retry);
   } else if (status === "disconnected" && retry?.nextRetryAt) {
     startCountdown(retry);
+  } else if (status === "error") {
+    info.textContent = "连接失败";
+    info.style.color = "#F44336";
   }
 }
 
 function startCountdown(retry) {
-  const el = document.getElementById("retryInfo");
+  const info = el("retryInfo");
+  info.style.color = "#FF9800";
   const tick = () => {
     const remaining = Math.max(0, Math.ceil((retry.nextRetryAt - Date.now()) / 1000));
-    el.textContent = `${remaining}秒后重连 (本轮第${retry.retryCount}次失败)`;
-    el.style.color = "#FF9800";
+    info.textContent = `${remaining}秒后重连 (本轮第${retry.retryCount}次失败)`;
     if (remaining <= 0) {
       clearInterval(countdownTimer);
       countdownTimer = null;
@@ -51,7 +61,6 @@ function startCountdown(retry) {
 el("btnConnect").addEventListener("click", async () => {
   const serverUrl = el("serverUrl").value.trim() || DEFAULT_SERVER;
   await chrome.storage.local.set({ serverUrl });
-  updateStatusUI("connecting");
   chrome.runtime.sendMessage({ type: "check_connection" });
 });
 
@@ -68,12 +77,12 @@ el("openOptions").addEventListener("click", (e) => {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "status_update") {
-    updateStatusUI(msg.status, msg.retry);
+    updateStatusUI(msg);
   }
 });
 
 chrome.runtime.sendMessage({ type: "get_status" }, (res) => {
-  if (res?.status) updateStatusUI(res.status, res.retry);
+  if (res?.status) updateStatusUI(res);
 });
 
 loadConfig();
