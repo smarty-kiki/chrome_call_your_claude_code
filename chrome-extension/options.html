@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 24px;
+      color: #333;
+    }
+    h2 { font-size: 18px; margin-bottom: 20px; color: #1a73e8; }
+    .field { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    input[type="text"]:focus { outline: none; border-color: #1a73e8; }
+    .btn {
+      padding: 8px 20px;
+      background: #1a73e8;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .btn:hover { background: #1557b0; }
+    .status { font-size: 12px; color: #666; margin-left: 8px; }
+    .retry-box {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: #f5f5f5;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .retry-box .retry-line { margin: 4px 0; color: #555; }
+    .retry-box .retry-line.error { color: #F44336; }
+    .retry-box .retry-line.connecting { color: #FF9800; }
+    .retry-box .retry-line.success { color: #4CAF50; }
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 20px 0 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #eee;
+    }
+  </style>
+</head>
+<body>
+  <h2>插件配置</h2>
+
+  <div class="field">
+    <label>服务端地址</label>
+    <input type="text" id="serverUrl" placeholder="http://localhost:3456" />
+  </div>
+
+  <button class="btn" id="btnSave">保存</button>
+  <span class="status" id="saveStatus"></span>
+
+  <div class="section-title">连接测试</div>
+  <button class="btn" id="btnTest" style="margin-right: 8px;">测试连接</button>
+
+  <div class="retry-box" id="statusBox" style="display: none;">
+    <div class="retry-line" id="statusLine"></div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
