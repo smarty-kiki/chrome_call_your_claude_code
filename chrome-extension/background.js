@@ -1,5 +1,5 @@
 const MENU_ID = "feedback-helper";
-const DEFAULT_SERVER = "ws://localhost:3456";
+const DEFAULT_SERVER = "ws://127.0.0.1:12346";
 const MAX_RETRIES = 3;
 const RETRY_INTERVAL_MS = 15000;
 const HEALTH_CHECK_ALARM = "health-check";
@@ -10,6 +10,7 @@ let retryTimer = null;
 let nextRetryAt = null;
 let ws = null;
 let pendingRequests = new Map();
+let isRetrying = false;
 
 // ── badge ──
 
@@ -32,9 +33,7 @@ function getRetryState() {
 
 async function getServerUrl() {
   const { serverUrl } = await chrome.storage.local.get("serverUrl");
-  const base = serverUrl || DEFAULT_SERVER;
-  // Convert http:// to ws:// if needed
-  return base.replace(/^http/, "ws");
+  return serverUrl || DEFAULT_SERVER;
 }
 
 function connect() {
@@ -43,6 +42,12 @@ function connect() {
     if (ws && ws.readyState === WebSocket.OPEN) {
       resolve(true);
       return;
+    }
+
+    // Close any stale WebSocket before creating a new one
+    if (ws) {
+      try { ws.close(); } catch {}
+      ws = null;
     }
 
     setStatus("connecting");
@@ -81,8 +86,7 @@ function connect() {
       };
 
       ws.onerror = () => {
-        ws = null;
-        handleRetry();
+        // onclose always fires after onerror, let onclose handle cleanup and retry
       };
     } catch {
       handleRetry();
@@ -119,18 +123,17 @@ function ping() {
 async function checkConnection() {
   const { serverUrl } = await chrome.storage.local.get("serverUrl");
   if (!serverUrl && !(await chrome.storage.local.get("serverUrl")).serverUrl) {
-    // No server configured and no default
     return;
   }
 
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     await connect();
   } else {
-    // Already connected, just ping
     const ok = await ping();
     if (!ok) {
+      // Close the unresponsive socket so onclose triggers reconnect
+      try { ws.close(); } catch {}
       setStatus("disconnected");
-      handleRetry();
     }
   }
 }
@@ -142,15 +145,23 @@ function setStatus(status) {
 }
 
 function handleRetry() {
+  if (isRetrying) return;
+  isRetrying = true;
+
+  clearRetryTimer();
   retryCount++;
 
   if (retryCount <= MAX_RETRIES) {
     setStatus("connecting");
-    retryTimer = setTimeout(() => connect(), 1000);
+    retryTimer = setTimeout(() => {
+      isRetrying = false;
+      connect();
+    }, 1000);
   } else {
     setStatus("disconnected");
     nextRetryAt = Date.now() + RETRY_INTERVAL_MS;
     retryTimer = setTimeout(() => {
+      isRetrying = false;
       retryCount = 0;
       nextRetryAt = null;
       connect();
@@ -191,6 +202,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     case "check_connection": {
       retryCount = 0;
+      isRetrying = false;
       clearRetryTimer();
       checkConnection();
       break;
@@ -256,11 +268,12 @@ chrome.alarms.create(HEALTH_CHECK_ALARM, { periodInMinutes: 5 });
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === HEALTH_CHECK_ALARM) {
     const { connectionStatus } = await chrome.storage.local.get("connectionStatus");
-    if (connectionStatus === "connected") {
+    if (connectionStatus === "connected" && ws && ws.readyState === WebSocket.OPEN) {
       const ok = await ping();
       if (!ok) {
+        // Close the unresponsive socket so onclose triggers reconnect
+        try { ws.close(); } catch {}
         setStatus("disconnected");
-        handleRetry();
       }
     }
   }

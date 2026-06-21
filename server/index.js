@@ -9,8 +9,9 @@ function parseArg(name, fallback) {
 }
 
 const PORT = parseInt(parseArg("port", "3456"), 10);
+const HOST = parseArg("host", "0.0.0.0");
 const LOG_DIR = parseArg("log-dir", null);
-const TMUX_SESSION = "claude";
+const TMUX_SESSION = parseArg("session", "claude");
 
 function buildPrompt({ pageUrl, pageTitle, selector, selection, description }) {
   const parts = [];
@@ -76,7 +77,7 @@ function logPrompt(prompt) {
   }
 }
 
-const wss = new WebSocketServer({ host: "127.0.0.1", port: PORT });
+const wss = new WebSocketServer({ host: HOST, port: PORT });
 
 wss.on("connection", (ws) => {
   console.log("[WebSocket] 客户端已连接");
@@ -128,5 +129,5 @@ wss.on("connection", (ws) => {
   });
 });
 
-console.log(`Call Your Claude WebSocket 服务已启动: ws://localhost:${PORT}`);
+console.log(`Call Your Claude WebSocket 服务已启动: ws://${HOST}:${PORT}`);
 console.log(`目标 tmux session: ${TMUX_SESSION}`);

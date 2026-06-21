@@ -1,4 +1,4 @@
-const DEFAULT_SERVER = "http://localhost:3456";
+const DEFAULT_SERVER = "ws://127.0.0.1:12346";
 
 const el = (id) => document.getElementById(id);
 let countdownTimer = null;
