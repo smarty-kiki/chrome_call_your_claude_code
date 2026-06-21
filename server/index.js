@@ -93,8 +93,9 @@ wss.on("connection", (ws) => {
 
         case "feedback": {
           const { pageUrl, pageTitle, selector, selection, description } = msg.data || {};
+          const requestId = msg.requestId;
           if (!selection || !description) {
-            ws.send(JSON.stringify({ type: "feedback_result", ok: false, error: "缺少选中内容或问题描述" }));
+            ws.send(JSON.stringify({ type: "feedback_result", requestId, ok: false, error: "缺少选中内容或问题描述" }));
             return;
           }
 
@@ -104,10 +105,10 @@ wss.on("connection", (ws) => {
           try {
             await sendToTmux(prompt);
             console.log("[已发送到 tmux]");
-            ws.send(JSON.stringify({ type: "feedback_result", ok: true }));
+            ws.send(JSON.stringify({ type: "feedback_result", requestId, ok: true }));
           } catch (err) {
             console.error("[发送失败]", err.message);
-            ws.send(JSON.stringify({ type: "feedback_result", ok: false, error: err.message }));
+            ws.send(JSON.stringify({ type: "feedback_result", requestId, ok: false, error: err.message }));
           }
           break;
         }

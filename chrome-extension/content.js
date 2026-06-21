@@ -275,6 +275,8 @@ async function submitFeedback(selection, selector) {
   submitBtn.disabled = true;
   submitBtn.textContent = "发送中...";
 
+  closePanel();
+
   try {
     const result = await chrome.runtime.sendMessage({
       type: "submit_feedback",
@@ -290,15 +292,11 @@ async function submitFeedback(selection, selector) {
 
     if (result && result.ok) {
       showToast("反馈提交成功");
-      closePanel();
     } else {
       throw new Error(result?.error || "Server error");
     }
   } catch {
     showToast("提交失败，请确保反馈服务已启动");
-  } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = "发给 claude_code";
   }
 }
 
