@@ -102,6 +102,11 @@
   line-height: 1.4;
 }
 
+.feedback-panel__url--iframe {
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+}
+
 .feedback-panel__selector {
   font-size: 12px;
   font-family: "SF Mono", "Fira Code", "Consolas", monospace;
@@ -220,6 +225,18 @@
 .feedback-panel__hint {
   color: #999;
   font-style: italic;
+}
+
+/* iframe highlight during picker mode */
+.fyc-iframe-highlight {
+  outline: 2px dashed rgba(255, 122, 69, 0.5) !important;
+  outline-offset: 3px;
+}
+
+.fyc-iframe-highlight--active {
+  outline: 3px solid #ff7a45 !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgba(255, 122, 69, 0.12) !important;
 }
 
 /* Toast */

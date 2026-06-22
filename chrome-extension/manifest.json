@@ -12,7 +12,8 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "css": ["feedback.css"]
+      "css": ["feedback.css"],
+      "all_frames": true
     }
   ],
   "options_ui": {

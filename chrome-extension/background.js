@@ -216,7 +216,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-async function handleFeedbackSubmit(data, sendResponse) {
+async function handleFeedbackSubmit(prompt, sendResponse) {
   await connect();
 
   if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -224,10 +224,15 @@ async function handleFeedbackSubmit(data, sendResponse) {
     return;
   }
 
+  if (!prompt || typeof prompt !== "string") {
+    sendResponse({ ok: false, error: "缺少 prompt" });
+    return;
+  }
+
   const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
   pendingRequests.set(requestId, { resolve: sendResponse });
 
-  ws.send(JSON.stringify({ type: "feedback", data, requestId }));
+  ws.send(JSON.stringify({ type: "feedback", prompt, requestId }));
 
   setTimeout(() => {
     if (pendingRequests.has(requestId)) {

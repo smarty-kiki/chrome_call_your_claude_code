@@ -13,27 +13,6 @@ const HOST = parseArg("host", "0.0.0.0");
 const LOG_DIR = parseArg("log-dir", null);
 const TMUX_SESSION = parseArg("session", "claude");
 
-function buildPrompt({ pageUrl, pageTitle, selector, selection, description }) {
-  const parts = [];
-
-  parts.push("[Call Your Claude] 请帮我看看这个网页上的问题：");
-  parts.push("");
-  parts.push(`页面链接: ${pageUrl}`);
-  if (pageTitle) parts.push(`页面标题: ${pageTitle}`);
-  if (selector) parts.push(`选中元素: ${selector}`);
-  if (selection) {
-    parts.push("");
-    parts.push("选中内容:");
-    parts.push("```");
-    parts.push(selection);
-    parts.push("```");
-  }
-  parts.push("问题描述:");
-  parts.push(description);
-
-  return parts.join("\n");
-}
-
 function sendToTmux(prompt) {
   return new Promise((resolve, reject) => {
     const load = spawn("tmux", ["load-buffer", "-"]);
@@ -93,14 +72,13 @@ wss.on("connection", (ws) => {
           break;
 
         case "feedback": {
-          const { pageUrl, pageTitle, selector, selection, description } = msg.data || {};
+          const { prompt } = msg || {};
           const requestId = msg.requestId;
-          if (!description) {
-            ws.send(JSON.stringify({ type: "feedback_result", requestId, ok: false, error: "缺少问题描述" }));
+          if (!prompt || typeof prompt !== "string") {
+            ws.send(JSON.stringify({ type: "feedback_result", requestId, ok: false, error: "缺少 prompt" }));
             return;
           }
 
-          const prompt = buildPrompt({ pageUrl, pageTitle, selector, selection, description });
           logPrompt(prompt);
 
           try {

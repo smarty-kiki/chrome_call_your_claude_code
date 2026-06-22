@@ -1,11 +1,23 @@
 const PANEL_ID = "feedback-side-panel";
 const HIGHLIGHT_CLASS = "feedback-highlight";
 const PICKER_HOVER_CLASS = "feedback-picker-hover";
-let highlightedEl = null;
-let pickerHoverEl = null;
+
+// ── state ──
+
 let pickerMode = false;
 let pickedSelector = null;
 let pickedContent = null;
+let pickerHoverEl = null;
+
+// iframe support
+const isInIframe = () => window.self !== window.top;
+let iframeIndex = -1;       // this frame's index in parent's <iframe> list (top-level = -1)
+let parentFrameEl = null;   // cached window.frameElement for same-origin parents
+
+if (isInIframe()) {
+  try { iframeIndex = getFrameIndex(); } catch {}
+  try { parentFrameEl = window.frameElement; } catch {}
+}
 
 // ── selector utils ──
 
@@ -54,23 +66,36 @@ function getElementSelector(el) {
   return parts.join(" > ");
 }
 
+function getFrameIndex() {
+  if (iframeIndex >= 0) return iframeIndex;
+  try {
+    const frames = parent.document.querySelectorAll("iframe");
+    for (let i = 0; i < frames.length; i++) {
+      if (frames[i] === window.frameElement) return i;
+    }
+  } catch {}
+  return -1;
+}
+
+function buildFullSelector(localSelector, frameIdx) {
+  if (frameIdx < 0 || isInIframe()) return localSelector;
+  return `iframe:nth-of-type(${frameIdx + 1}) > ${localSelector}`;
+}
+
 // ── highlight ──
 
 function highlightContainer(el) {
   if (!el) return;
   unhighlightContainer();
   el.classList.add(HIGHLIGHT_CLASS);
-  highlightedEl = el;
 }
 
 function unhighlightContainer() {
-  if (highlightedEl) {
-    highlightedEl.classList.remove(HIGHLIGHT_CLASS);
-    highlightedEl = null;
-  }
+  const el = document.querySelector(`.${HIGHLIGHT_CLASS}`);
+  if (el) el.classList.remove(HIGHLIGHT_CLASS);
 }
 
-// ── picker ──
+// ── picker (iframe) ──
 
 function isPanelElement(el) {
   const panel = document.getElementById(PANEL_ID);
@@ -95,40 +120,29 @@ function onPickerClick(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  // select this element
-  pickedSelector = getElementSelector(el);
-  pickedContent = (el.textContent || "").trim().slice(0, 500);
+  const localSelector = getElementSelector(el);
+  const content = (el.textContent || "").trim().slice(0, 500);
+  const fIdx = getFrameIndex();
 
-  // update panel
-  const selectorEl = document.getElementById("feedback-selector");
-  const contentEl = document.getElementById("feedback-selection");
-  const textarea = document.getElementById("feedback-description");
-  const submitBtn = document.getElementById("feedback-submit");
-  const titleEl = document.querySelector(".feedback-panel__title");
-
-  if (selectorEl) selectorEl.textContent = pickedSelector;
-  if (contentEl) contentEl.textContent = pickedContent || "(空元素)";
-  if (contentEl) contentEl.classList.remove("feedback-panel__hint");
-  if (submitBtn) submitBtn.disabled = false;
-  if (titleEl) titleEl.textContent = "Call Your Claude";
-
-  exitPickerMode();
-  highlightContainer(el);
-
-  // auto-focus textarea
-  if (textarea) textarea.focus();
-}
-
-function updatePanelSide(mouseX) {
-  const panel = document.getElementById(PANEL_ID);
-  if (!panel) return;
-  const side = mouseX < window.innerWidth / 2 ? "right" : "left";
-  panel.classList.remove("feedback-panel--left", "feedback-panel--right");
-  panel.classList.add(`feedback-panel--${side}`);
+  if (isInIframe()) {
+    parent.postMessage({
+      type: "fyc-iframe-picker-result",
+      selector: localSelector,
+      content: content,
+      iframeIndex: fIdx,
+      frameUrl: location.href,
+    }, "*");
+  } else {
+    pickedSelector = buildFullSelector(localSelector, fIdx);
+    pickedContent = content;
+    openPanel({ selection: pickedContent, selector: pickedSelector });
+  }
 }
 
 function onPickerMouseMove(e) {
-  updatePanelSide(e.clientX);
+  if (typeof updatePanelSide === "function") {
+    updatePanelSide(e.clientX);
+  }
 }
 
 function enterPickerMode() {
@@ -137,6 +151,7 @@ function enterPickerMode() {
   document.addEventListener("mouseover", onPickerMouseOver, true);
   document.addEventListener("mousemove", onPickerMouseMove, true);
   document.addEventListener("click", onPickerClick, true);
+  if (!isInIframe()) setupIframeHighlights();
 }
 
 function exitPickerMode() {
@@ -149,6 +164,42 @@ function exitPickerMode() {
     pickerHoverEl.classList.remove(PICKER_HOVER_CLASS);
     pickerHoverEl = null;
   }
+  if (!isInIframe()) clearIframeHighlights();
+}
+
+// ── iframe visual highlights (top-level only) ──
+
+function setupIframeHighlights() {
+  const iframes = document.querySelectorAll("iframe");
+  iframes.forEach((iframe, index) => {
+    iframe.classList.add("fyc-iframe-highlight");
+    iframe.dataset.fycIframeIndex = index + 1;
+
+    iframe.addEventListener("mouseenter", () => {
+      iframe.classList.add("fyc-iframe-highlight--active");
+    });
+    iframe.addEventListener("mouseleave", () => {
+      iframe.classList.remove("fyc-iframe-highlight--active");
+    });
+  });
+}
+
+function clearIframeHighlights() {
+  document.querySelectorAll("iframe.fyc-iframe-highlight").forEach((iframe) => {
+    iframe.classList.remove("fyc-iframe-highlight", "fyc-iframe-highlight--active");
+    delete iframe.dataset.fycIframeIndex;
+  });
+}
+
+// ── broadcast to iframes ──
+
+function broadcastToIframes(msg) {
+  if (isInIframe()) return;
+  try {
+    for (let i = 0; i < parent.frames.length; i++) {
+      try { parent.frames[i].postMessage(msg, "*"); } catch {}
+    }
+  } catch {}
 }
 
 // ── panel ──
@@ -162,19 +213,34 @@ function getPanelSide() {
       return center < window.innerWidth / 2 ? "right" : "left";
     }
   }
-  return "left"; // default: panel on left
+  return "left";
 }
 
-function createPanel({ selection, selector, mode }) {
+function updatePanelSide(mouseX) {
+  const panel = document.getElementById(PANEL_ID);
+  if (!panel) return;
+  const side = mouseX < window.innerWidth / 2 ? "right" : "left";
+  panel.classList.remove("feedback-panel--left", "feedback-panel--right");
+  panel.classList.add(`feedback-panel--${side}`);
+}
+
+function createPanel({ selection, selector, frameUrl }) {
   if (document.getElementById(PANEL_ID)) return;
 
   const panel = document.createElement("div");
   panel.id = PANEL_ID;
   panel.className = `feedback-panel feedback-panel--${getPanelSide()}`;
 
-  const isPicker = mode === "picker";
-  const selDisplay = isPicker ? "请点击页面中的目标元素..." : escapeHtml(selection || "");
-  const selDisplayClass = isPicker ? "feedback-panel__hint" : "";
+  let urlFieldHtml = `<label>页面链接</label>
+        <div class="feedback-panel__url">${escapeHtml(location.href)}</div>`;
+  if (frameUrl) {
+    urlFieldHtml = `<label>父页面链接</label>
+        <div class="feedback-panel__url">${escapeHtml(location.href)}</div>
+        <div class="feedback-panel__field" style="margin-top:8px">
+          <label>iframe 链接</label>
+          <div class="feedback-panel__url feedback-panel__url--iframe">${escapeHtml(frameUrl)}</div>
+        </div>`;
+  }
 
   panel.innerHTML = `
     <div class="feedback-panel__header-right">
@@ -182,18 +248,17 @@ function createPanel({ selection, selector, mode }) {
       <button class="feedback-panel__close" id="feedback-close">&times;</button>
     </div>
     <div class="feedback-panel__inner">
-      <h2 class="feedback-panel__title">${isPicker ? "选择目标元素" : "Call Your Claude"}</h2>
+      <h2 class="feedback-panel__title">Call Your Claude</h2>
       <div class="feedback-panel__field">
-        <label>页面链接</label>
-        <div class="feedback-panel__url">${escapeHtml(location.href)}</div>
+        ${urlFieldHtml}
       </div>
       <div class="feedback-panel__field">
-        <label>选中元素 <span class="feedback-panel__shortcut">${isMac() ? "⌘/" : "Ctrl+/"}</span></label>
-        <div class="feedback-panel__selector" id="feedback-selector">${escapeHtml(selector || (isPicker ? "-" : "-"))}</div>
+        <label>选中元素</label>
+        <div class="feedback-panel__selector" id="feedback-selector">${escapeHtml(selector || "-")}</div>
       </div>
       <div class="feedback-panel__field">
         <label>选中内容</label>
-        <div class="feedback-panel__selection ${selDisplayClass}" id="feedback-selection">${isPicker ? "请点击页面中的目标元素..." : escapeHtml(selection || "")}</div>
+        <div class="feedback-panel__selection" id="feedback-selection">${escapeHtml(selection || "")}</div>
       </div>
       <div class="feedback-panel__field">
         <label for="feedback-description">问题描述</label>
@@ -207,7 +272,7 @@ function createPanel({ selection, selector, mode }) {
       </div>
       <div class="feedback-panel__actions">
         <span class="feedback-panel__shortcut feedback-panel__shortcut--enter">Enter</span>
-        <button class="feedback-panel__btn feedback-panel__btn--submit" id="feedback-submit" ${isPicker ? "disabled" : ""}>发给 Claude Code</button>
+        <button class="feedback-panel__btn feedback-panel__btn--submit" id="feedback-submit">发给 Claude Code</button>
       </div>
     </div>
   `;
@@ -215,32 +280,40 @@ function createPanel({ selection, selector, mode }) {
   document.body.appendChild(panel);
 
   document.addEventListener("keydown", onPanelEsc);
-
-  if (!isPicker && selector) {
-    highlightContainer(getSelectionContainer());
-  }
-
   requestAnimationFrame(() => panel.classList.add("feedback-panel--open"));
 
   panel.querySelector("#feedback-close").addEventListener("click", () => {
     exitPickerMode();
     closePanel();
   });
+
   panel.querySelector("#feedback-submit").addEventListener("click", () => {
-    const sel = isPicker ? pickedContent : selection;
-    const selSelector = isPicker ? pickedSelector : selector;
-    submitFeedback(sel, selSelector);
+    submitFeedback();
   });
 
-  // Enter to submit (Shift+Enter for newline)
   panel.querySelector("#feedback-description").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      const sel = isPicker ? pickedContent : selection;
-      const selSelector = isPicker ? pickedSelector : selector;
-      submitFeedback(sel, selSelector);
+      submitFeedback();
     }
   });
+
+  const textarea = panel.querySelector("#feedback-description");
+  if (textarea) textarea.focus();
+}
+
+function openPanel({ selection, selector, frameUrl }) {
+  unhighlightContainer();
+  exitPickerMode();
+  closePanel();
+  createPanel({ selection, selector, frameUrl });
+}
+
+function closePanel() {
+  const panel = document.getElementById(PANEL_ID);
+  if (!panel) return;
+  panel.classList.remove("feedback-panel--open");
+  setTimeout(() => panel.remove(), 300);
 }
 
 function onPanelEsc(e) {
@@ -250,44 +323,53 @@ function onPanelEsc(e) {
   }
 }
 
-function closePanel() {
-  unhighlightContainer();
-  exitPickerMode();
-  document.removeEventListener("keydown", onPanelEsc);
-  const panel = document.getElementById(PANEL_ID);
-  if (!panel) return;
-  panel.classList.remove("feedback-panel--open");
-  setTimeout(() => panel.remove(), 300);
-}
+// ── submit ──
 
-async function submitFeedback(selection, selector) {
-  const description = document.getElementById("feedback-description").value.trim();
+async function submitFeedback() {
+  const selectionEl = document.getElementById("feedback-selection");
+  const selectorEl = document.getElementById("feedback-selector");
+  const textarea = document.getElementById("feedback-description");
+  const submitBtn = document.getElementById("feedback-submit");
+
+  const selection = selectionEl ? selectionEl.textContent : "";
+  const selector = selectorEl ? selectorEl.textContent : "";
+  const description = textarea ? textarea.value.trim() : "";
+
   if (!description) {
     showToast("请填写问题描述");
-    return;
-  }
-  if (selection === "请点击页面中的目标元素...") {
-    showToast("请先选择目标内容");
+    if (textarea) textarea.focus();
     return;
   }
 
-  const submitBtn = document.getElementById("feedback-submit");
-  submitBtn.disabled = true;
-  submitBtn.textContent = "发送中...";
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "发送中...";
+  }
 
   closePanel();
+
+  let parentUrl;
+  if (isInIframe()) {
+    try { parentUrl = parent.location.href; } catch {}
+  }
+
+  let prompt;
+  if (parentUrl) {
+    prompt = `[Call Your Claude] 请帮我看看这个网页上的问题（iframe 内选中）：\n\n父页面链接: ${parentUrl}\niframe 链接: ${location.href}`;
+  } else {
+    prompt = `[Call Your Claude] 请帮我看看这个网页上的问题：\n\n页面链接: ${location.href}`;
+  }
+  if (document.title) prompt += `\n页面标题: ${document.title}`;
+  if (selector) prompt += `\n选中元素: ${selector}`;
+  if (selection) {
+    prompt += `\n\n选中内容:\n\`\`\`\n${selection}\n\`\`\``;
+  }
+  prompt += `\n问题描述:\n${description}`;
 
   try {
     const result = await chrome.runtime.sendMessage({
       type: "submit_feedback",
-      data: {
-        pageUrl: location.href,
-        pageTitle: document.title,
-        selector,
-        selection,
-        description,
-        timestamp: new Date().toISOString(),
-      },
+      prompt,
     });
 
     if (result && result.ok) {
@@ -314,10 +396,6 @@ function showToast(msg) {
   }, 3000);
 }
 
-function isMac() {
-  return /Mac/i.test(navigator.platform);
-}
-
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
@@ -329,15 +407,16 @@ function escapeHtml(str) {
 function openFromSelection(text) {
   const container = getSelectionContainer();
   const selector = container ? getElementSelector(container) : "-";
-  createPanel({ selection: text, selector, mode: "selection" });
+  highlightContainer(container);
+  createPanel({ selection: text, selector });
 }
 
 function openFromPicker() {
-  createPanel({ selection: null, selector: null, mode: "picker" });
+  createPanel({ selection: null, selector: null });
   enterPickerMode();
 }
 
-// keyboard shortcuts: Cmd+/ or Cmd+\ (also works with Ctrl on Windows)
+// keyboard shortcuts
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "/" || e.key === "\\")) {
     e.preventDefault();
@@ -345,9 +424,53 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// context menu message from background.js
+// ── iframe message handlers ──
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "SHOW_FEEDBACK") {
     openFromSelection(msg.selection);
+    return;
+  }
+
+  if (msg.type === "PICKER_MODE_START") {
+    openFromPicker();
+    return;
   }
 });
+
+// Listen for iframe picker results (top-level page only)
+if (!isInIframe()) {
+  window.addEventListener("message", (event) => {
+    if (event.data && event.data.type === "fyc-iframe-picker-result") {
+      clearIframeHighlights();
+      const { selector, content, iframeIndex, frameUrl } = event.data;
+      if (selector && !pickedSelector) {
+        pickedSelector = buildFullSelector(selector, iframeIndex);
+        pickedContent = content;
+        openPanel({ selection: pickedContent, selector: pickedSelector, frameUrl });
+      }
+    }
+
+    if (event.data && event.data.type === "fyc-iframe-ready") {
+      if (pickerMode) {
+        broadcastToIframes({ type: "PICKER_MODE_START" });
+      }
+    }
+  });
+}
+
+// Iframe: notify parent that we're ready, and listen for picker mode broadcast
+if (isInIframe()) {
+  window.addEventListener("load", () => {
+    try { parent.postMessage({ type: "fyc-iframe-ready" }, "*"); } catch {}
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.data && event.data.type === "PICKER_MODE_START") {
+      // Only enter picker mode if not already active in this frame
+      if (!pickerMode) {
+        openFromPicker();
+      }
+    }
+  });
+}
