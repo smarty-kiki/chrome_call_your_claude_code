@@ -96,7 +96,10 @@ function connect() {
         ws = null;
         if (currentStatus === "connected") {
           onConnectFailed();
+        } else if (connecting) {
+          onConnectFailed();
         }
+        resolve(false);
       };
 
       ws.onerror = () => {};
