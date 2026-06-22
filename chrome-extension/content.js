@@ -234,7 +234,7 @@ function createPanel({ selection, selector, mode }) {
 
   // Enter to submit (Shift+Enter for newline)
   panel.querySelector("#feedback-description").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       const sel = isPicker ? pickedContent : selection;
       const selSelector = isPicker ? pickedSelector : selector;
