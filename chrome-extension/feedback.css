@@ -227,6 +227,11 @@
   font-style: italic;
 }
 
+.feedback-panel__field--iframe-url {
+  overflow: hidden;
+  transition: max-height 0.2s, margin 0.2s, opacity 0.2s;
+}
+
 /* iframe highlight during picker mode */
 .fyc-iframe-highlight {
   outline: 2px dashed rgba(255, 122, 69, 0.5) !important;
