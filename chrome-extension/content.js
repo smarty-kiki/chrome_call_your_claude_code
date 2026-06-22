@@ -434,14 +434,11 @@ async function submitFeedback() {
 
   closePanel();
 
-  let parentUrl;
-  if (isInIframe()) {
-    try { parentUrl = parent.location.href; } catch {}
-  }
-
   let prompt;
-  if (parentUrl) {
-    prompt = `[Call Your Claude] 请帮我看看这个网页上的问题（iframe 内选中）：\n\n页面链接: ${parentUrl}\niframe 链接: ${location.href}`;
+  if (iframePosition && iframePosition !== "-") {
+    let parentUrl;
+    try { parentUrl = parent.location.href; } catch {}
+    prompt = `[Call Your Claude] 请帮我看看这个网页上的问题（iframe 内选中）：\n\n页面链接: ${parentUrl || location.href}\niframe 链接: ${location.href}`;
   } else {
     prompt = `[Call Your Claude] 请帮我看看这个网页上的问题：\n\n页面链接: ${location.href}`;
   }
@@ -470,8 +467,8 @@ async function submitFeedback() {
     } else {
       throw new Error(result?.error || "Server error");
     }
-  } catch {
-    showToast("提交失败，请确保反馈服务已启动");
+  } catch (err) {
+    showToast("提交失败: " + (err.message || "请确保反馈服务已启动"));
   }
 }
 

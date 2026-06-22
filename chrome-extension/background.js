@@ -210,7 +210,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       break;
     }
     case "submit_feedback": {
-      handleFeedbackSubmit(msg.data, sendResponse);
+      handleFeedbackSubmit(msg.prompt, sendResponse);
       return true;
     }
   }
