@@ -207,7 +207,7 @@ function createPanel({ selection, selector, mode }) {
       </div>
       <div class="feedback-panel__actions">
         <span class="feedback-panel__shortcut feedback-panel__shortcut--enter">Enter</span>
-        <button class="feedback-panel__btn feedback-panel__btn--submit" id="feedback-submit" ${isPicker ? "disabled" : ""}>发给 claude_code</button>
+        <button class="feedback-panel__btn feedback-panel__btn--submit" id="feedback-submit" ${isPicker ? "disabled" : ""}>发给 Claude Code</button>
       </div>
     </div>
   `;
@@ -266,7 +266,7 @@ async function submitFeedback(selection, selector) {
     showToast("请填写问题描述");
     return;
   }
-  if (!selection || selection === "请点击页面中的目标元素...") {
+  if (selection === "请点击页面中的目标元素...") {
     showToast("请先选择目标内容");
     return;
   }

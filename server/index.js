@@ -21,12 +21,13 @@ function buildPrompt({ pageUrl, pageTitle, selector, selection, description }) {
   parts.push(`页面链接: ${pageUrl}`);
   if (pageTitle) parts.push(`页面标题: ${pageTitle}`);
   if (selector) parts.push(`选中元素: ${selector}`);
-  parts.push("");
-  parts.push("选中内容:");
-  parts.push("```");
-  parts.push(selection);
-  parts.push("```");
-  parts.push("");
+  if (selection) {
+    parts.push("");
+    parts.push("选中内容:");
+    parts.push("```");
+    parts.push(selection);
+    parts.push("```");
+  }
   parts.push("问题描述:");
   parts.push(description);
 
@@ -94,8 +95,8 @@ wss.on("connection", (ws) => {
         case "feedback": {
           const { pageUrl, pageTitle, selector, selection, description } = msg.data || {};
           const requestId = msg.requestId;
-          if (!selection || !description) {
-            ws.send(JSON.stringify({ type: "feedback_result", requestId, ok: false, error: "缺少选中内容或问题描述" }));
+          if (!description) {
+            ws.send(JSON.stringify({ type: "feedback_result", requestId, ok: false, error: "缺少问题描述" }));
             return;
           }
 
